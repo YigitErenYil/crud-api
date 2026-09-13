@@ -71,16 +71,22 @@ def create_task(payload: TaskCreate):
     if not payload.title or not payload.title.strip():
         raise HTTPException(status_code=400, detail="title is required")
     conn = get_db()
-    cursor = conn.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", (payload.title, 0))
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO tasks (title, done) VALUES (%s, %s) RETURNING *",
+        (payload.title, False),
+    )
+    row = cur.fetchone()
     conn.commit()
-    new_id = cursor.lastrowid
     conn.close()
-    return {"id": new_id, "title": payload.title, "done": False}
+    return row_to_task(row)
 
 @app.put("/tasks/{task_id}", summary="Update a task's title and/or done status")
 def update_task(task_id: int, payload: TaskUpdate):
     conn = get_db()
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+    row = cur.fetchone()
     if row is None:
         conn.close()
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
@@ -94,9 +100,12 @@ def update_task(task_id: int, payload: TaskUpdate):
             raise HTTPException(status_code=400, detail="title cannot be empty")
         new_title = payload.title
     if payload.done is not None:
-        new_done = 1 if payload.done else 0
+        new_done = payload.done
 
-    conn.execute("UPDATE tasks SET title = ?, done = ? WHERE id = ?", (new_title, new_done, task_id))
+    cur.execute(
+        "UPDATE tasks SET title = %s, done = %s WHERE id = %s",
+        (new_title, new_done, task_id),
+    )
     conn.commit()
     conn.close()
     return {"id": task_id, "title": new_title, "done": bool(new_done)}
@@ -104,11 +113,13 @@ def update_task(task_id: int, payload: TaskUpdate):
 @app.delete("/tasks/{task_id}", status_code=204, summary="Delete a task")
 def delete_task(task_id: int):
     conn = get_db()
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+    row = cur.fetchone()
     if row is None:
         conn.close()
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
     conn.commit()
     conn.close()
     return
