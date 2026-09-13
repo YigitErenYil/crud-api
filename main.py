@@ -59,13 +59,14 @@ def get_task(task_id: int):
 
 @app.post("/tasks", status_code=201, summary="Create a new task")
 def create_task(payload: TaskCreate):
-    global next_id
     if not payload.title or not payload.title.strip():
         raise HTTPException(status_code=400, detail="title is required")
-    task = {"id": next_id, "title": payload.title, "done": False}
-    tasks.append(task)
-    next_id += 1
-    return task
+    conn = get_db()
+    cursor = conn.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", (payload.title, 0))
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return {"id": new_id, "title": payload.title, "done": False}
 
 
 @app.put("/tasks/{task_id}", summary="Update a task's title and/or done status")
