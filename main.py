@@ -48,15 +48,18 @@ def health():
 @app.get("/tasks", summary="List all tasks")
 def list_tasks():
     conn = get_db()
-    rows = conn.execute("SELECT * FROM tasks").fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM tasks")
+    rows = cur.fetchall()
     conn.close()
     return [row_to_task(r) for r in rows]
-
 
 @app.get("/tasks/{task_id}", summary="Get one task by id")
 def get_task(task_id: int):
     conn = get_db()
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+    row = cur.fetchone()
     conn.close()
     if row is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
