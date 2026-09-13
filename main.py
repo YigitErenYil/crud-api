@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
+import sqlite3
 app = FastAPI()
 
 class TaskCreate(BaseModel):
@@ -63,7 +64,6 @@ def update_task(task_id: int, payload: TaskUpdate):
             return task
     raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-
 @app.delete("/tasks/{task_id}", status_code=204, summary="Delete a task")
 def delete_task(task_id: int):
     for i, task in enumerate(tasks):
@@ -71,3 +71,30 @@ def delete_task(task_id: int):
             tasks.pop(i)
             return
     raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+def get_db():
+    conn = sqlite3.connect("tasks.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            done INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    if count == 0:
+        conn.executemany(
+            "INSERT INTO tasks (title, done) VALUES (?, ?)",
+            [("Buy milk", 0), ("Write README", 0), ("Push to GitHub", 1)],
+        )
+    conn.commit()
+    conn.close()
+
+
+init_db()
