@@ -6,6 +6,7 @@ import os
 import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
+from auth import supabase
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
