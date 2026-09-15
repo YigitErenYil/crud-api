@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -112,6 +112,20 @@ def login(payload: AuthCredentials):
         "access_token": result.session.access_token,
         "refresh_token": result.session.refresh_token,
     }
+
+@app.get("/public/info", summary="Public info, no auth required")
+def public_info():
+    return {"message": "Welcome stranger! This info is public."}
+
+
+@app.get("/protected/profile", summary="Get profile (token presence check only)")
+def get_profile(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Access token required")
+    token = authorization.split(" ")[1]
+    if not token:
+        raise HTTPException(status_code=401, detail="Access token required")
+    return {"message": "token presence confirmed, verification comes in Stage 3"}
 
 @app.put("/tasks/{task_id}", summary="Update a task's title and/or done status")
 def update_task(task_id: int, payload: TaskUpdate):
