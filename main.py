@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -26,6 +26,20 @@ class TaskUpdate(BaseModel):
 class AuthCredentials(BaseModel):
     email: str
     password: str
+
+def get_current_user(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Access token required")
+    token = authorization.split(" ")[1]
+    if not token:
+        raise HTTPException(status_code=401, detail="Access token required")
+
+    try:
+        user_response = supabase.auth.get_user(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return user_response.user
 
 
 @app.exception_handler(HTTPException)
@@ -113,30 +127,26 @@ def login(payload: AuthCredentials):
         "refresh_token": result.session.refresh_token,
     }
 
+@app.post("/auth/logout", status_code=204, summary="Log out the current user")
+def logout(user=Depends(get_current_user)):
+    supabase.auth.sign_out()
+    return
+
 @app.get("/public/info", summary="Public info, no auth required")
 def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
 
 @app.get("/protected/profile", summary="Get profile (token verified via Supabase)")
-def get_profile(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Access token required")
-    token = authorization.split(" ")[1]
-    if not token:
-        raise HTTPException(status_code=401, detail="Access token required")
-
-    try:
-        user_response = supabase.auth.get_user(token)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    user = user_response.user
+def get_profile(user=Depends(get_current_user)):
     return {
         "id": user.id,
         "email": user.email,
         "created_at": user.created_at,
     }
+@app.get("/protected/dashboard", summary="Dashboard (reuses the same guard)")
+def get_dashboard(user=Depends(get_current_user)):
+    return {"message": f"Welcome to your dashboard, {user.email}"}
 
 @app.put("/tasks/{task_id}", summary="Update a task's title and/or done status")
 def update_task(task_id: int, payload: TaskUpdate):
