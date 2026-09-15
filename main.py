@@ -118,14 +118,25 @@ def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
 
-@app.get("/protected/profile", summary="Get profile (token presence check only)")
+@app.get("/protected/profile", summary="Get profile (token verified via Supabase)")
 def get_profile(authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Access token required")
     token = authorization.split(" ")[1]
     if not token:
         raise HTTPException(status_code=401, detail="Access token required")
-    return {"message": "token presence confirmed, verification comes in Stage 3"}
+
+    try:
+        user_response = supabase.auth.get_user(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    user = user_response.user
+    return {
+        "id": user.id,
+        "email": user.email,
+        "created_at": user.created_at,
+    }
 
 @app.put("/tasks/{task_id}", summary="Update a task's title and/or done status")
 def update_task(task_id: int, payload: TaskUpdate):
