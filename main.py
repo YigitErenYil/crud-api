@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -12,7 +13,7 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 app = FastAPI()
-
+bearer_scheme = HTTPBearer()
 
 class TaskCreate(BaseModel):
     title: Optional[str] = None
@@ -27,10 +28,8 @@ class AuthCredentials(BaseModel):
     email: str
     password: str
 
-def get_current_user(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Access token required")
-    token = authorization.split(" ")[1]
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    token = credentials.credentials
     if not token:
         raise HTTPException(status_code=401, detail="Access token required")
 
