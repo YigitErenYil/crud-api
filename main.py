@@ -23,6 +23,11 @@ class TaskUpdate(BaseModel):
     done: Optional[bool] = None
 
 
+class AuthCredentials(BaseModel):
+    email: str
+    password: str
+
+
 @app.exception_handler(HTTPException)
 def http_exception_handler(request, exc):
     return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
@@ -81,6 +86,32 @@ def create_task(payload: TaskCreate):
     conn.commit()
     conn.close()
     return row_to_task(row)
+
+@app.post("/auth/signup", status_code=201, summary="Create a new account")
+def signup(payload: AuthCredentials):
+    if not payload.email or not payload.password:
+        raise HTTPException(status_code=400, detail="email and password are required")
+    try:
+        result = supabase.auth.sign_up({"email": payload.email, "password": payload.password})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"user": result.user}
+
+
+@app.post("/auth/login", summary="Log in and get an access token")
+def login(payload: AuthCredentials):
+    if not payload.email or not payload.password:
+        raise HTTPException(status_code=400, detail="email and password are required")
+    try:
+        result = supabase.auth.sign_in_with_password(
+            {"email": payload.email, "password": payload.password}
+        )
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid login credentials")
+    return {
+        "access_token": result.session.access_token,
+        "refresh_token": result.session.refresh_token,
+    }
 
 @app.put("/tasks/{task_id}", summary="Update a task's title and/or done status")
 def update_task(task_id: int, payload: TaskUpdate):
