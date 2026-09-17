@@ -10,6 +10,9 @@ from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from auth import supabase
 from enrich import EnrichRequest, EnrichResponse, STUB_RESPONSE
+import json
+from pathlib import Path
+from llm import client
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -230,12 +233,30 @@ def init_db():
 
 init_db()
 
+PROMPT_PATH = Path(__file__).parent / "prompts" / "enrich-v1.md"
+
+def load_enrich_prompt():
+    return PROMPT_PATH.read_text(encoding="utf-8")
 
 def row_to_task(row):
     return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
 
-@app.post("/enrich", response_model=EnrichResponse, summary="Enrich a scraped book record with category, summary and quality flags")
+@app.post("/enrich", summary="Enrich a scraped book record with category, summary and quality flags")
 def enrich(payload: EnrichRequest):
     if os.getenv("LLM_STUB") == "1":
         return STUB_RESPONSE
-    raise HTTPException(status_code=501, detail="Real model call not wired yet — coming in Stage 2")
+
+    system_prompt = load_enrich_prompt()
+    user_content = json.dumps(payload.model_dump())
+
+    response = client.chat.completions.create(
+        model=os.getenv("LLM_MODEL"),
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    )
+    raw_text = response.choices[0].message.content
+    # Stage 3'te bu ham metni parse edip EnrichResponse şemasına doğrulayacağız.
+    return {"raw_model_output": raw_text}
