@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -8,6 +9,7 @@ import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from auth import supabase
+from enrich import EnrichRequest, EnrichResponse, STUB_RESPONSE
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -45,6 +47,15 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_
 def http_exception_handler(request, exc):
     return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
 
+@app.exception_handler(RequestValidationError)
+def validation_exception_handler(request, exc):
+    errors = exc.errors()
+    if errors:
+        field = ".".join(str(x) for x in errors[0]["loc"] if x != "body")
+        message = f"{field}: {errors[0]['msg']}"
+    else:
+        message = "Invalid request body"
+    return JSONResponse(status_code=400, content={"error": message})
 
 tasks = [
     {"id": 1, "title": "Buy milk", "done": False},
@@ -222,3 +233,9 @@ init_db()
 
 def row_to_task(row):
     return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
+
+@app.post("/enrich", response_model=EnrichResponse, summary="Enrich a scraped book record with category, summary and quality flags")
+def enrich(payload: EnrichRequest):
+    if os.getenv("LLM_STUB") == "1":
+        return STUB_RESPONSE
+    raise HTTPException(status_code=501, detail="Real model call not wired yet — coming in Stage 2")
