@@ -2,3 +2,4 @@ tasks.db
 .env
 .idea/
 __pycache__/
+logs/
