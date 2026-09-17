@@ -9,10 +9,12 @@ import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from auth import supabase
-from enrich import EnrichRequest, EnrichResponse, STUB_RESPONSE
+from enrich import EnrichRequest, EnrichResponse, STUB_RESPONSE, parse_model_json
 import json
 from pathlib import Path
 from llm import client
+from datetime import datetime, timezone
+
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -238,10 +240,25 @@ PROMPT_PATH = Path(__file__).parent / "prompts" / "enrich-v1.md"
 def load_enrich_prompt():
     return PROMPT_PATH.read_text(encoding="utf-8")
 
+QUARANTINE_PATH = Path(__file__).parent / "logs" / "quarantine.jsonl"
+
+
+def log_quarantine(input_payload: dict, error: Exception, raw_output: str):
+    QUARANTINE_PATH.parent.mkdir(exist_ok=True)
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "prompt_version": "enrich-v1",
+        "input": input_payload,
+        "error": str(error),
+        "raw_output": raw_output,
+    }
+    with open(QUARANTINE_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
 def row_to_task(row):
     return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
 
-@app.post("/enrich", summary="Enrich a scraped book record with category, summary and quality flags")
+@app.post("/enrich", response_model=EnrichResponse, summary="Enrich a scraped book record with category, summary and quality flags")
 def enrich(payload: EnrichRequest):
     if os.getenv("LLM_STUB") == "1":
         return STUB_RESPONSE
@@ -249,14 +266,32 @@ def enrich(payload: EnrichRequest):
     system_prompt = load_enrich_prompt()
     user_content = json.dumps(payload.model_dump())
 
-    response = client.chat.completions.create(
-        model=os.getenv("LLM_MODEL"),
-        temperature=0.2,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-    )
-    raw_text = response.choices[0].message.content
-    # Stage 3'te bu ham metni parse edip EnrichResponse şemasına doğrulayacağız.
-    return {"raw_model_output": raw_text}
+    def call_model(messages):
+        response = client.chat.completions.create(
+            model=os.getenv("LLM_MODEL"),
+            temperature=0.2,
+            messages=messages,
+        )
+        return response.choices[0].message.content
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    raw_text = call_model(messages)
+
+    try:
+        parsed = parse_model_json(raw_text)
+        return EnrichResponse.model_validate(parsed)
+    except Exception as first_error:
+        repair_messages = messages + [
+            {"role": "assistant", "content": raw_text},
+            {"role": "user", "content": f"Your previous answer was rejected for this reason: {first_error}. Return only corrected JSON matching the schema."},
+        ]
+        raw_text_2 = call_model(repair_messages)
+        try:
+            parsed_2 = parse_model_json(raw_text_2)
+            return EnrichResponse.model_validate(parsed_2)
+        except Exception as second_error:
+            log_quarantine(payload.model_dump(), second_error, raw_text_2)
+            raise HTTPException(status_code=422, detail="Model output failed validation after one repair attempt")
