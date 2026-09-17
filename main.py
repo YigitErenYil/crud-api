@@ -9,11 +9,12 @@ import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from auth import supabase
-from enrich import EnrichRequest, EnrichResponse, STUB_RESPONSE, parse_model_json
+from enrich import EnrichRequest, EnrichResponse, STUB_RESPONSE, parse_model_json, call_model_with_retry
 import json
 from pathlib import Path
 from llm import client
 from datetime import datetime, timezone
+import time as time_module
 
 
 load_dotenv()
@@ -263,22 +264,33 @@ def enrich(payload: EnrichRequest):
     if os.getenv("LLM_STUB") == "1":
         return STUB_RESPONSE
 
+    if os.getenv("LLM_ENABLED", "true").lower() == "false":
+        raise HTTPException(status_code=503, detail="LLM enrichment is currently disabled")
+
     system_prompt = load_enrich_prompt()
     user_content = json.dumps(payload.model_dump())
+    model_name = os.getenv("LLM_MODEL")
 
-    def call_model(messages):
-        response = client.chat.completions.create(
-            model=os.getenv("LLM_MODEL"),
-            temperature=0.2,
-            messages=messages,
-        )
+    def call_model(messages, repair_count):
+        start = time_module.monotonic()
+        response = call_model_with_retry(client, model_name, messages)
+        duration_ms = int((time_module.monotonic() - start) * 1000)
+        usage = response.usage
+        print(json.dumps({
+            "prompt_version": "enrich-v1",
+            "model": model_name,
+            "input_tokens": usage.prompt_tokens if usage else None,
+            "output_tokens": usage.completion_tokens if usage else None,
+            "duration_ms": duration_ms,
+            "repair_count": repair_count,
+        }))
         return response.choices[0].message.content
 
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    raw_text = call_model(messages)
+    raw_text = call_model(messages, repair_count=0)
 
     try:
         parsed = parse_model_json(raw_text)
@@ -288,7 +300,7 @@ def enrich(payload: EnrichRequest):
             {"role": "assistant", "content": raw_text},
             {"role": "user", "content": f"Your previous answer was rejected for this reason: {first_error}. Return only corrected JSON matching the schema."},
         ]
-        raw_text_2 = call_model(repair_messages)
+        raw_text_2 = call_model(repair_messages, repair_count=1)
         try:
             parsed_2 = parse_model_json(raw_text_2)
             return EnrichResponse.model_validate(parsed_2)
